@@ -14,6 +14,7 @@ jobs:
     # ================== 🔑 核心安全配置：只给这个任务写权限 ==================
     permissions:
       contents: write
+      actions: write
     # =====================================================================
 
     steps:
@@ -30,7 +31,7 @@ jobs:
           target_sync_branch: main        # 你自己 Fork 仓库要同步的分支（如 main 或 master）
           target_repo_token: ${{ secrets.GITHUB_TOKEN }} # 自动生成的临时 Token
           upstream_sync_branch: main      # 原作者仓库的主分支名称（需与上游一致）
-          upstream_sync_repo: kerpopule/hermes-jev-skills # 【重要】替换为原作者的“用户名/仓库名”
+          upstream_sync_repo: ${{ github.repository }} # 【重要】替换为原作者的“用户名/仓库名”
           
           # 如果同步遇到冲突，设置策略（可填 test, merge, 或 force）
           # test: 仅测试不修改；merge: 尝试自动合并；force: 强制覆盖你 Fork 的分支（推荐，保持与上游完全一致）
