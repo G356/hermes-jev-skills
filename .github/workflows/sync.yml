@@ -10,9 +10,15 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+
+    # ================== 🔑 核心安全配置：只给这个任务写权限 ==================
+    permissions:
+      contents: write
+    # =====================================================================
+
     steps:
       - name: Checkout target repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # 必须设置为 true 以允许向仓库推送更改
           persist-credentials: true
