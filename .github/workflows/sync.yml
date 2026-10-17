@@ -1,0 +1,31 @@
+name: Sync Fork
+
+on:
+  schedule:
+    # 每天 UTC 时间 0:00 (北京时间 8:00) 自动触发
+    - cron: '0 0 * * *'
+  # 允许在 GitHub 页面上手动点击按钮触发同步
+  workflow_dispatch: 
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          # 必须设置为 true 以允许向仓库推送更改
+          persist-credentials: true
+
+      - name: Sync Upstream
+        # 使用 GitHub 官方提供的专用同步 Action
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
+        with:
+          target_sync_branch: main        # 你自己 Fork 仓库要同步的分支（如 main 或 master）
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # 自动生成的临时 Token
+          upstream_sync_branch: main      # 原作者仓库的主分支名称（需与上游一致）
+          upstream_sync_repo: kerpopule/hermes-jev-skills # 【重要】替换为原作者的“用户名/仓库名”
+          
+          # 如果同步遇到冲突，设置策略（可填 test, merge, 或 force）
+          # test: 仅测试不修改；merge: 尝试自动合并；force: 强制覆盖你 Fork 的分支（推荐，保持与上游完全一致）
+          test_mode: false
