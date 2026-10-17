@@ -27,6 +27,9 @@ MODES: Dict[str, Tuple[str, ...]] = {
     "decide_tools": ("off", "on"),
     # Jev-Omni answers vision_analyze questions locally and logs; it never changes a result.
     "vision": ("off", "shadow"),
+    # TypeSafe Jev answers the same questions with the picture sent to TypeSafe. Its own switch:
+    # turning on the local shadow must never start sending screenshots off the machine.
+    "vision_cloud": ("off", "shadow"),
     "lanes": ("off", "shadow", "on"),
 }
 # Block is the one mode that can stop an agent. It needs a second key that only a person makes.

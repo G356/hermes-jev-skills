@@ -23,6 +23,10 @@ The key can come from any of four providers, and the same Jev answers either way
 
 If more than one key exists, TypeSafe is used: an existing install never starts routing its decisions somewhere else because an OpenRouter or Zen key happened to be in the environment for a text model. To pick a different one on purpose, set `JEV_PROVIDER=openrouter` or `JEV_PROVIDER=zen` in the environment the commands run in; it is honoured only when that provider actually has a key here, and an unset or unknown value changes nothing. `jev doctor` reports which one is in use under `key.provider`.
 
+## Image-preview qualification is not cloud opt-in
+
+For an image-support review, use `scripts/live_images_check.py` only with authorized synthetic imagery and the existing private key flow. Do not enable `/jev vision_cloud shadow` merely because tests pass: it sends pictures to TypeSafe and needs separate permission for those images. Keep `vision_cloud` off during ordinary installation/readiness checks. A Box answer is an experimental localization result, not permission to execute coordinates. See `docs/images.md` for limits, sensitive-question skips and fail-open behavior.
+
 ## Rules
 
 - The Hermes manifest intentionally does not require a single provider's environment variable. Provider/key resolution happens at runtime. An absent `TYPESAFE_API_KEY` does not mean an OpenRouter, Venice or Zen installation is broken. Use `jev doctor`'s provider/presence/reachability results, never secret-file inspection. With no key, decision calls keep their existing fail-open behavior; omission from the manifest is not a promise of keyless inference.

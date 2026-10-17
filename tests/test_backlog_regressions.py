@@ -52,10 +52,13 @@ class LauncherTests(unittest.TestCase):
 
 
 class ManifestTests(unittest.TestCase):
-    def test_declares_registered_search_tool_and_request_middleware(self):
+    def test_search_tool_declared_and_request_middleware_registered_in_code(self):
         manifest = (ROOT / "hermes/plugin/hermes-jev/plugin.yaml").read_text()
+        plugin = (ROOT / "hermes/plugin/hermes-jev/__init__.py").read_text()
         self.assertIn("  - jev_search\n", manifest)
-        self.assertIn("provides_middleware:\n  - llm_request\n", manifest)
+        # Hermes v0.22.2 accepts registration via PluginContext, not this manifest field.
+        self.assertNotIn("provides_middleware:", manifest)
+        self.assertIn('ctx.register_middleware("llm_request", _on_llm_request)', plugin)
 
 
 if __name__ == "__main__":

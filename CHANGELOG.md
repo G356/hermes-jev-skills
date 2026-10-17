@@ -2,7 +2,28 @@
 
 ## Unreleased
 
+- Fix #48 (thanks @zimu002): remove the unsupported `provides_middleware` manifest declaration. Hermes v0.22.2 and current hosts register `llm_request` via `PluginContext.register_middleware` in plugin code; the declaration only produced a warning and never enabled the middleware. Add a regression preserving code registration and a warning-free manifest.
+
+## 0.24.0 (2026-10-16)
+
+Released by the daily Jev steward: 3 commit(s) on main since v0.23.1.
+
+- Harden image-preview readiness: validate image references in actual string values rather than JSON object keys or escaped syntax; reject whitespace-only references. Apply the cloud shadow's sensitive-question skip to its A/B runner and recheck the opt-in immediately before sending after image preparation. Add six regression tests. Keep cloud image forwarding off by default.
+
+- Add image support for TypeSafe's "Dreamer-ready" images preview: `jevkit/images.py` reads PNG/baseline-JPEG headers and refuses, before sending, anything the API would refuse (format, animation, progressive JPEG, size and pixel limits); `client.ask(..., assets=...)` sends images with the `TypeSafe-Danger-Zone-Images` header to TypeSafe only (`images_unsupported` elsewhere) and refuses unreferenced assets; new `client.box()` question with a validated `{left, top, right, bottom}` answer. Add a cloud half to the vision shadow (`jevkit/cloud_vision.py`, `/jev vision_cloud shadow`, kill switch `VISION_CLOUD_OFF`): TypeSafe Jev answers the same decision-shaped `vision_analyze` questions and logs beside Jev-Omni. Off by default and separate from `/jev vision`, because the picture leaves the machine; it never changes a tool result. JPEGs with a rotating EXIF orientation are refused (the API ignores it). Add `scripts/live_images_check.py` (one live request with a known answer) and `scripts/vision_cloud_ab.py` (accuracy and coverage per cut-off on labelled checks). Tested on real PIL/ImageMagick output, 40k fuzzed headers and a strict local HTTP stand-in. See `docs/images.md`.
+
+- Guard the gate-ask red-team miss `g031`: moving the live Hermes config directory now asks a person via a local fact, before model inference. Regression covers the replay and benign neighboring moves; no threshold or fleet-switch change.
+
 - Fix #46: read current Hermes `session_model_usage` when available, preserving model/provider, call and token totals, cache split, and subscription versus metered classification; retain the legacy `messages` fallback. State window and unknown-billing caveats explicitly. Thanks @vgarlu for the reproducible schema report.
+
+**New**
+
+- Add image support and a TypeSafe Jev vision shadow (#47) (5acac92)
+
+**Changes and fixes**
+
+- Fix spend collector for Hermes session model usage (#46) (b1ddc41)
+- Guard moving live Hermes config in gate-ask (98ce26a)
 
 ## 0.23.1 (2026-10-13)
 

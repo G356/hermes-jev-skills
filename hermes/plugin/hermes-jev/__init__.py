@@ -8,7 +8,8 @@ Uses only public plugin seams, so it survives `hermes update`:
 * ``transform_tool_result`` (if on) screens web_search / web_extract results for injected instructions
 * ``post_tool_call``       remembers which skills a session loaded, so a suggestion is never a repeat;
   with ``/jev vision shadow`` it also queues a local Jev-Omni answer to each decision-shaped
-  ``vision_analyze`` question and logs how it compares, never changing the result (jevkit/omni_vision.py)
+  ``vision_analyze`` question and logs how it compares, never changing the result (jevkit/omni_vision.py);
+  ``/jev vision_cloud shadow`` does the same with TypeSafe Jev, sending the picture (jevkit/cloud_vision.py)
 * tools + ``/jev``        memory filter, compaction selection, action chooser, status and switches
 * ``pre_approval_request`` / ``post_approval_response``  the command-risk gate in SHADOW only:
   registered only when ``/jev gate shadow`` was set before the gateway started; observers that
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from .jevkit import catalog, choose, compact, effort, keystore, ladder, rerank, route, search, skillpick, supervise, turn, webscreen
-from .jevkit import decide as policy_engine, evaluate, gate, omni_vision, policy as policies, route_to, shadowq, switches
+from .jevkit import cloud_vision, decide as policy_engine, evaluate, gate, omni_vision, policy as policies, route_to, shadowq, switches
 
 _LOCK = threading.Lock()
 _TURNS: Dict[str, Dict[str, Any]] = {}      # session_id -> the current turn's text and decision
@@ -1039,6 +1040,10 @@ def _vision_job(payload: Dict[str, Any], queued: float) -> None:
                     lock_path=switches.jev_dir(True) / "vision-omni.lock")
 
 
+def _vision_cloud_job(payload: Dict[str, Any], queued: float) -> None:
+    cloud_vision.job(payload, queued, mode=lambda: switches.mode("vision_cloud"), dropped=shadowq.dropped)
+
+
 # A vision run loads a ~14 GB local model for seconds, so it gets its own small queue (never
 # delaying the gate shadow behind it), a sample rate (`vision_sample`, default 0.25) and a
 # per-process daily ceiling (`vision_daily_max`, default 40).
@@ -1053,7 +1058,8 @@ def _vision_number(key: str, default: float) -> float:
 
 def _vision_observe(tool_name: str, args: Any, session_id: str, extra: Dict[str, Any]) -> None:
     try:
-        if switches.mode("vision") != "shadow":
+        local, cloud = switches.mode("vision") == "shadow", switches.mode("vision_cloud") == "shadow"
+        if not (local or cloud):
             return
         if random.random() >= _vision_number("vision_sample", 0.25):
             return
@@ -1068,7 +1074,10 @@ def _vision_observe(tool_name: str, args: Any, session_id: str, extra: Dict[str,
             with _LOCK:
                 _VISION_DAY.clear() if day not in _VISION_DAY else None
                 _VISION_DAY[day] = _VISION_DAY.get(day, 0) + 1
-            _VISION_Q.submit(_vision_job, payload, time.monotonic())
+            if local:
+                _VISION_Q.submit(_vision_job, payload, time.monotonic())
+            if cloud:
+                _VISION_Q.submit(_vision_cloud_job, dict(payload), time.monotonic())
     except Exception:  # noqa: BLE001 - an observer must never touch the call it watches
         pass
 
@@ -1148,7 +1157,7 @@ def _jev_command(raw_args: str = "") -> str:
                                              for name, info in switches.describe().items()),
              "usage: /jev routing on|shadow|off [all] · /jev skills on|off [all] · /jev notice on|off [all]"
              " · /jev screen on|shadow|off [all] · /jev gate off|shadow [all] · /jev decide_tools on|off [all]"
-             " · /jev vision off|shadow [all]"]
+             " · /jev vision off|shadow [all] · /jev vision_cloud off|shadow [all]"]
     return "\n".join(lines)
 
 
@@ -1197,6 +1206,6 @@ def register(ctx: Any) -> None:
             ctx.register_hook(event, _kanban_hook(feature, job))
     ctx.register_middleware("llm_request", _on_llm_request)
     ctx.register_command("jev", _jev_command, description="Jev status and switches",
-                         args_hint="[routing|skills|notice|screen on|shadow|off [all]] [gate off|shadow] [decide_tools on|off] [vision off|shadow]")
+                         args_hint="[routing|skills|notice|screen on|shadow|off [all]] [gate off|shadow] [decide_tools on|off] [vision off|shadow] [vision_cloud off|shadow]")
     rule = _RULE + (_RULE_ESCALATION if ((route.load_config().get("escalation") or {}).get("enabled")) else "")
     ctx.register_system_prompt_section("hermes-jev", rule, max_chars=1400)

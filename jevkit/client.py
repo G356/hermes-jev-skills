@@ -18,7 +18,7 @@ import time
 import urllib.parse
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
-from . import keystore
+from . import images, keystore
 
 ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-latest"
@@ -85,6 +85,15 @@ def noul(instructions: Any, criteria: Optional[Mapping[str, Any]] = None) -> Dic
     return question
 
 
+def box(instructions: Any) -> Dict[str, Any]:
+    """Where something is in an image (Jev 1.14+, images only). No criteria.
+
+    The answer is always one box: there is no "not found". Ask a ``noul`` beside it ("is the
+    target visible?") and ignore the box when that is low.
+    """
+    return {"type": "box", "instructions": instructions}
+
+
 # ── the shape of a question ──────────────────────────────────────────────────
 #
 # The builders above only guard the callers that use them. A dict written by hand went
@@ -93,7 +102,7 @@ def noul(instructions: Any, criteria: Optional[Mapping[str, Any]] = None) -> Dic
 # here, once, and `ask` applies them to everything it is handed — so a feature cannot ship a
 # question Jev cannot answer, whoever built it.
 
-QUESTION_TYPES = ("choice", "score", "noul")
+QUESTION_TYPES = ("choice", "score", "noul", "box")
 MIN_CRITERIA = 2
 # The API's own limits (TypeSafe API reference, read 2026-09-26): at most 255 options in a
 # Choice, and a Score of 2 to 10 levels. Refused here, because the API answers either with a
@@ -162,6 +171,11 @@ def check_question(name: str, question: Any) -> Dict[str, Any]:
                          f'The id names the question, "instructions" asks it')
     text = text if isinstance(text, str) else json.loads(json.dumps(text, default=str))
     criteria = question.get("criteria")
+    if kind == "box":
+        if criteria is not None:
+            raise ValueError(f'question "{_shown(name)}" is a box: it takes no criteria, only instructions '
+                             f'naming what to find and in which image')
+        return {"type": "box", "instructions": text}
     if kind == "noul":
         if criteria is None:
             return {"type": "noul", "instructions": text}
@@ -520,6 +534,14 @@ def _check_answer(name: str, question: Mapping[str, Any], answer: Any) -> Dict[s
     kind = question["type"]
     if kind == "noul":
         return {"type": "noul", "noul": _unit(answer.get("noul"), f"{name}.noul")}
+    if kind == "box":
+        raw = answer.get("box")
+        if not isinstance(raw, dict):
+            raise JevError("malformed", f"answer {name} has no box")
+        edges = {edge: _unit(raw.get(edge), f"{name}.box.{edge}") for edge in ("left", "top", "right", "bottom")}
+        if not (edges["left"] < edges["right"] and edges["top"] < edges["bottom"]):
+            raise _invalid(name, "box_has_area", f"{edges!r}")
+        return {"type": "box", "box": edges, "confidence": _unit(answer.get("confidence"), f"{name}.confidence")}
     if kind == "choice":
         options = list(question["criteria"])
         picked = answer.get("choice")
@@ -593,6 +615,7 @@ def ask(
     provider: Optional[str] = None,
     transport: Optional[Transport] = None,
     patient: bool = False,
+    assets: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Ask Jev every question against one state, in a single request.
 
@@ -606,6 +629,12 @@ def ask(
     ``patient=True`` is for batch jobs: a 429/529 that names a ``retry-after`` is waited out
     (within ``timeout``) instead of retried after a quarter second. A live caller never passes
     it, so a slow provider costs a live feature its short budget and nothing more.
+
+    ``assets`` maps a reference to an image built by ``images.asset``; the picture goes
+    wherever that reference appears in the state or a question. Images (and ``box``
+    questions) are TypeSafe's "Dreamer-ready" preview: they are sent only to TypeSafe or an
+    explicit compatible endpoint, with the Danger Zone header, and a reference used nowhere
+    is refused here rather than as the API's 400.
     """
     if not questions:
         raise ValueError("no questions")
@@ -629,12 +658,21 @@ def ask(
     if len(encoded_state) > MAX_STATE_CHARS:
         raise JevError("state_too_large")
     default_model = _provider_model(via)
-    body = json.dumps(
-        {"state": state, "model": model or os.environ.get("TYPESAFE_MODEL") or default_model,
-         "questions": {name: dict(q) for name, q in questions.items()}},
-        separators=(",", ":"), default=str,
-    ).encode("utf-8")
+    request: Dict[str, Any] = {"state": state, "model": model or os.environ.get("TYPESAFE_MODEL") or default_model,
+                               "questions": {name: dict(q) for name, q in questions.items()}}
+    pictures = (_checked_assets(assets, state if isinstance(state, str) else json.loads(encoded_state),
+                                request["questions"]) if assets else {})
+    needs_images = bool(pictures) or any(q["type"] == "box" for q in questions.values())
+    if needs_images and via != "typesafe":
+        raise JevError("images_unsupported", f"images and box questions go to TypeSafe only, not {via}")
+    if pictures:
+        request["assets"] = pictures
+    body = json.dumps(request, separators=(",", ":"), default=str).encode("utf-8")
+    if len(body) > images.MAX_REQUEST_BYTES:
+        raise JevError("request_too_large")
     headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": USER_AGENT}
+    if needs_images:
+        headers[images.DANGER_ZONE_HEADER] = "true"
     if key:
         headers["Authorization"] = f"Bearer {key}"
     if via == "openrouter":
@@ -682,6 +720,36 @@ def ask(
             "input_tokens": int(tokens) if isinstance(tokens, (int, float)) and not isinstance(tokens, bool)
             and math.isfinite(float(tokens)) and tokens >= 0 else None,
             "provider": "custom" if endpoint else via}
+
+
+def _checked_assets(assets: Optional[Mapping[str, Mapping[str, Any]]], state: Any,
+                    questions: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Check references against actual string values, never JSON syntax or object keys."""
+    if not assets:
+        return {}
+    pending, values = [state], []
+    for question in questions.values():
+        pending.extend((question.get("instructions"), question.get("criteria")))
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            values.append(value)
+        elif isinstance(value, Mapping):
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple)):
+            pending.extend(value)
+    out: Dict[str, Dict[str, Any]] = {}
+    for ref, item in assets.items():
+        ref = str(ref)
+        if not ref.strip() or len(ref.encode("utf-8")) > images.MAX_REFERENCE_BYTES:
+            raise ValueError(f"asset reference {_shown(ref)} must be 1 to {images.MAX_REFERENCE_BYTES} bytes")
+        if not any(ref in value for value in values):
+            raise ValueError(f"asset {_shown(ref)} is never referenced in the state or a question")
+        if (not isinstance(item, Mapping) or not isinstance(item.get("data_base64"), str)
+                or item.get("format") not in images.FORMATS):
+            raise ValueError(f"asset {_shown(ref)} needs data_base64 and a format of {', '.join(images.FORMATS)}")
+        out[ref] = {"type": "image", "format": item["format"], "data_base64": item["data_base64"]}
+    return out
 
 
 def verify_key(api_key: str, timeout: float = 10.0, provider: str = "typesafe") -> bool:

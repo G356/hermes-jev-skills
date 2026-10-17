@@ -4,9 +4,14 @@
   "tuned_on": "jev-1.13.0",
   "feature": "gate",
   "code_first": {
-    "credential_source": "pre-rule: gate.local_facts finds a credential store or metadata endpoint being read out (not a key used to log in with -i). 4 of 65 must-deny/ask fixtures, 0 of 53 harmless ones, 1 of 595 real commands"
+    "credential_source": "pre-rule: gate.local_facts finds a credential store or metadata endpoint being read out (not a key used to log in with -i). 4 of 65 must-deny/ask fixtures, 0 of 53 harmless ones, 1 of 595 real commands",
+    "critical_config_move": "pre-rule: relocating the live Hermes config directory requires a person; no command text is sent to Jev for this fact"
   },
   "pre_rules": [
+    {
+      "then": "ask_human",
+      "any": [["fact.critical_config_move", "==", true]]
+    },
     {
       "then": "ask_human",
       "any": [

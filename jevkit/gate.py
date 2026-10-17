@@ -157,12 +157,20 @@ CREDENTIAL_SOURCES = [
                r"\.ssh/id_(?:rsa|ed25519|ecdsa|dsa)\b(?!\.pub)|\.pem\b|\.p12\b|\.keystore\b|\.git-credentials)"),
 ]
 
+# Relocating the live Hermes directory disables the agent even when the destination
+# is temporary. Do not rely on a probabilistic "destructive" answer for this case.
+_CRITICAL_CONFIG_MOVE = re.compile(
+    r'(?:^|[;&|\n])\s*mv\s+(?:(?:-[A-Za-z]+|--)\s+)*["\']?'
+    r'(?:~|\$HOME|\$\{HOME\})/\.hermes["\']?(?=\s)'
+)
+
 
 def local_facts(command: Optional[str]) -> Dict[str, Any]:
     """Facts code can compute about a command without asking anyone (never sent to Jev)."""
     # A key named after -i (ssh, scp, rsync -e "ssh -i ...") is used to log in, not read out.
     text = re.sub(r"(?:^|\s)-i\s+(?:\"[^\"]*\"|'[^']*'|\S+)", " ", strip_comments(command or ""))
-    return {"credential_source": any(p.search(text) for p in CREDENTIAL_SOURCES)}
+    return {"credential_source": any(p.search(text) for p in CREDENTIAL_SOURCES),
+            "critical_config_move": bool(_CRITICAL_CONFIG_MOVE.search(strip_comments(command or "")))}
 
 
 def command_sha(command: str) -> str:
