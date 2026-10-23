@@ -447,15 +447,33 @@ def _with_effort(request: Dict[str, Any], level: str) -> Dict[str, Any]:
 
 
 def _on_llm_request(request: Optional[Dict[str, Any]] = None, session_id: str = "", turn_id: Any = None,
-                    model: str = "", provider: str = "", **_: Any) -> Any:
+                    model: str = "", provider: str = "", base_url: str = "", **_: Any) -> Any:
     mode = _setting("routing", "off")
     if mode not in ("on", "shadow") or not isinstance(request, dict):
         return None
+    # A turn can survive a fallback or a /model change. Never reuse a decision bought
+    # for a different connection or model. Keep the endpoint only in memory: URLs may
+    # contain credentials, so this binding must never be included in telemetry.
+    binding = (provider, base_url, model, request.get("model", model))
     with _LOCK:
         turn = _TURNS.get(session_id or "-")
-    if not turn or turn["turn_id"] != turn_id:
+        if not turn or turn["turn_id"] != turn_id:
+            return None
+        decision = turn["decision"]
+        if decision is not None and turn.get("route_binding") != binding:
+            # Irreversible for this turn: A -> B -> A must not revive A's decision.
+            # A fresh pre_llm_call creates the next turn's independent state.
+            turn["route_invalidated"] = True
+            turn.pop("effort", None)
+        invalidated = turn.get("route_invalidated", False)
+    if invalidated:
+        _log({"kind": "route_effective", "mode": mode, "applied": False,
+              "requested_model": request.get("model", model),
+              "effective_request_model": request.get("model", model),
+              "provider": provider, "provider_identity": None,
+              "compatibility": "request_context_changed", "first_request": False,
+              "reason": "cached routing context changed; retaining original model"})
         return None
-    decision = turn["decision"]
     route_answers: Any = None
     if decision is None:                       # first API call of this turn: ask Jev exactly once
         catalog_provider = catalog.HERMES_ALIASES.get(provider, provider)
@@ -472,6 +490,22 @@ def _on_llm_request(request: Optional[Dict[str, Any]] = None, session_id: str = 
         # Some Hermes paths hand us an already-prefixed model id; normalising here keeps
         # the decision string honest and keeps the pinned check comparing like with like.
         bare = model.split(":", 1)[1] if model.startswith((f"{catalog_provider}:", f"{provider}:")) else model
+        outgoing = request.get("model", model)
+        outgoing_bare = (outgoing.split(":", 1)[1]
+                         if isinstance(outgoing, str) and outgoing.startswith((f"{catalog_provider}:", f"{provider}:"))
+                         else outgoing)
+        if outgoing_bare != bare:
+            # Host metadata may lag a preceding middleware or explicit request choice.
+            # Unknown intent must retain the actual outgoing model, not buy a route.
+            with _LOCK:
+                turn["route_invalidated"] = True
+                turn.pop("effort", None)
+            _log({"kind": "route_effective", "mode": mode, "applied": False,
+                  "requested_model": outgoing, "effective_request_model": outgoing,
+                  "provider": provider, "provider_identity": None,
+                  "compatibility": "request_model_mismatch", "first_request": True,
+                  "reason": "outgoing model disagrees with host metadata; retaining request"})
+            return None
         current = f"{catalog_provider}:{bare}"
         default = _default_model()
         default_bare = str(default).split(":", 1)[-1] if default else ""
@@ -503,6 +537,7 @@ def _on_llm_request(request: Optional[Dict[str, Any]] = None, session_id: str = 
             # going quiet, which would read as "nothing needed routing".
             decision = {"routed": False, "model": current, "reason": f"routing failed ({type(error).__name__})"}
         turn["decision"] = decision
+        turn["route_binding"] = binding
         # The effort pick reads the same answers routing bought; route.decide now carries
         # them back on the decision, so no second Jev call is needed.
         route_answers = decision.get("answers")
@@ -522,12 +557,17 @@ def _on_llm_request(request: Optional[Dict[str, Any]] = None, session_id: str = 
             entry["escalate"] = {k: escalation.get(k) for k in ("rung", "kind", "model", "forced", "reason",
                                                                 "considered", "stakes")}
         _log(entry)
-    applied = mode == "on" and bool(decision.get("routed") and decision.get("model_id"))
+    requested = request.get("model", model)
+    proposed = decision.get("model_id")
+    applied = mode == "on" and bool(decision.get("routed") and proposed) and proposed != requested
     # Log the model at this middleware boundary, not merely Jev's preferred model.
     # Shadow, pins, and failed decisions must never count as applied savings. This is
     # not provider usage telemetry: a later middleware or provider may still change it.
     effective = decision["model_id"] if applied else request.get("model", model)
     _log({"kind": "route_effective", "mode": mode, "applied": applied,
+          "provider": provider, "provider_identity": None if provider == "custom" else provider,
+          "compatibility": "operator_assertion" if provider == "custom" and decision.get("routed")
+                           else "router_provider_guard" if decision.get("routed") else "not_selected",
           "requested_model": request.get("model", model), "effective_request_model": effective,
           "decision_model": decision.get("model"), "reason": decision.get("reason"),
           "first_request": turn.get("request_count", 0) == 0})
@@ -579,6 +619,8 @@ def _on_transform_output(response_text: str = "", session_id: str = "", **_: Any
         return None
     with _LOCK:
         turn = _TURNS.get(session_id or "-")
+    if (turn or {}).get("route_invalidated"):
+        return None
     decision = (turn or {}).get("decision")
     effort_tag = f" · effort {(turn or {}).get('effort')}" if (turn or {}).get("effort") else ""
     if not decision or not decision.get("routed"):
