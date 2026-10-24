@@ -2,9 +2,26 @@
 
 ## Unreleased
 
+## 0.25.1 (2026-10-23)
+
+Released by the daily Jev steward: 10 commit(s) on main since v0.25.0.
+
 - Integrate PR #51 (thanks @fatalmonk): bind routing reuse to request context, invalidate changed-context turns, suppress stale notices and provide offline audit/evaluation tools. Preserve current 0.25.1 metadata instead of the older proposed 0.24.1. Close a review-discovered initial-request mismatch: retain an outgoing model that disagrees with host metadata, with no classifier call or later revival in that turn. No live-mode activation or provider entitlement claim.
 
 - Extend the ask-only decoded-shell pre-rule to standalone and absolute-path base64 decoders, macOS `-D`, shell basenames/absolute paths (`sh`, `bash`, `zsh`, `dash`, `ksh`) and a direct `env` shell wrapper. Fresh Jev 1.14 replay reproduced a `zsh` false approve before this change; keep the detector advisory and shadow behavior unchanged. Add no-network family/benign-boundary regressions. Qualification details and remaining promotion limits are in `evals/gate/QUALIFICATION-1.14.md`.
+
+**Changes and fixes**
+
+- fix(routing): bind cached decisions to request context (766112d)
+- docs: record upstream reconciliation and final validation (3bbf2f1)
+- fix(routing): invalidate changed turns and validate evaluation provenance (9ee6de0)
+- fix(gate): ask before decoded stream reaches shell (9340daf)
+- fix(gate): ask before decoded stream reaches shell (87b1577)
+- fix: rescore validated score distributions and publish bounded synthetic gate evidence (7edc270)
+- test: track the allowlisted synthetic corpus and outcome projections (2e931ad)
+- Qualify Jev 1.14 gates and cover decoded shell families (d685a10)
+- Separate shipping the guard from policy-mode promotion (657e3b7)
+- Retain explicit outgoing models before first routing decision (e3655be)
 
 ## 0.25.1
 
