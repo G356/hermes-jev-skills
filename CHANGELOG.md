@@ -82,6 +82,7 @@ Released by the daily Jev steward: 15 commit(s) on main since v0.24.0.
 
 - Bind cached routing decisions to provider, endpoint and model context; count actual request-model changes and add offline audit/evaluation tools. Custom identity enablement remains blocked pending host and gateway evidence. Prepared patch version; not deployed by this work.
 - Follow up PR #51 review: invalidate routing for the remainder of a changed-context turn, suppress stale routing/effort notices, distinguish audited installed 0.20.0 from repository base 0.24.0, and exclude synthetic/unclassified evaluation pairs while requiring structured cost and human-review provenance.
+- Close PR #51 concurrent routing/effort races: claim context before classification, keep simultaneous followers unchanged, and revalidate turn identity and binding before publishing a decision or committing request changes. Add deterministic configured-effort and concurrent-turn regressions.
 
 
 ## 0.24.0 (2026-10-16)
